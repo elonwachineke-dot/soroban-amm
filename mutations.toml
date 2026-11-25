@@ -1,0 +1,12 @@
+# Only add a survivor after confirming it is an intentional non-coverage gap.
+# Every accepted entry needs a stable mutation id and a specific justification.
+
+[crates.amm]
+
+[crates.batch_auction]
+
+[crates.concentrated_liquidity]
+
+[crates.governance]
+
+[crates.token]

@@ -6,7 +6,7 @@ WASM_DIR := target/wasm32v1-none/release
 
 SHELL := bash
 
-.PHONY: all help build release-build optimize abi check-abi test-abi test test-all fmt lint lint-js check-node-versions check-stellar-version check check-docs check-branch-protection check-branch-protection-remote check-storage-keys check-deploy-scripts check-test-modules check-reachability check-release-manifest \
+.PHONY: all help build release-build optimize abi check-abi test-abi test test-all fmt lint lint-js check-node-versions check-stellar-version check check-docs check-branch-protection check-branch-protection-remote check-storage-keys check-deploy-scripts check-test-modules check-reachability check-release-manifest mutation-check \
         size size-check doc audit bench deploy e2e clean fuzz-amm fuzz-amm-nightly fuzz-cl
 
 # Bare `make` explains itself instead of building.
@@ -58,6 +58,10 @@ test: build ## Build, then run the full workspace test suite
 
 test-all: ## Run tests for the whole workspace
 	cargo test --workspace
+
+mutation-check: ## Run curated guard mutations for one crate (CRATE=<package>)
+	@test -n "$(CRATE)" || { echo "Usage: make mutation-check CRATE=<package>" >&2; exit 2; }
+	python3 scripts/mutation_check.py --crate "$(CRATE)"
 
 fuzz-amm: ## Build AMM WASM and run the deployed stateful invariant suite (CI case count)
 	cargo build --release --target wasm32v1-none -p amm -p token

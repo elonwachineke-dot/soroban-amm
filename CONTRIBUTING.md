@@ -135,6 +135,7 @@ make build      # cargo build --release --target wasm32v1-none
 make optimize   # optimize every WASM artifact from `make build` via the Stellar CLI
 make test       # build, then run the workspace test suite
 make test-all   # run tests for the whole workspace
+make mutation-check CRATE=amm # check curated authorization and guard mutations
 make fmt        # cargo fmt --all
 make lint       # cargo clippy --all -- -D warnings
 make check-docs # verify docs/error-codes.md matches #[contracterror] enums
@@ -208,6 +209,36 @@ This is intended to track the same set of checks CI enforces in
 ## Testing
 
 Every behavioral change **must** come with tests.
+
+### Authorization and guard mutations
+
+When adding or changing an authorization check, deadline, slippage bound, or
+similar guard in a contract, run the curated mutation check for that crate:
+
+```bash
+make mutation-check CRATE=amm
+```
+
+The check removes or flips one selected guard at a time, runs that crate's
+library tests, and restores `src/lib.rs` after each mutation. A survivor means
+the tests still pass with the guard changed; unaccepted survivors fail the
+command and include the source line and before/after text. Compile-invalid
+mutations are reported separately. The nightly workflow runs the selected
+contracts and uploads its report. The local script requires Python 3.11 or
+newer.
+
+An intentional survivor can be exempted in `mutations.toml` under the crate's
+`[crates.<name>]` table. Add its exact reported mutation `id` and a specific
+reason explaining why the survivor is not a coverage gap:
+
+```toml
+[[crates.amm.accepted_survivors]]
+id = "auth:123:5:0123abcd"
+justification = "Removing this user-level auth fails nested token authorization."
+```
+
+Do not use an exemption to avoid adding a test for a guard the contract relies
+on. Remove accepted entries when the corresponding tests land.
 
 ### Local artifacts and repository hygiene
 

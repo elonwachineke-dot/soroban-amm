@@ -1,0 +1,120 @@
+name: Curated Mutation Check
+
+on:
+  schedule:
+    - cron: "11 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  mutation-check:
+    if: github.repository == 'promisszn/soroban-amm'
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    outputs:
+      result: ${{ steps.mutate.outputs.result }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Set up Rust
+        run: rustup show
+
+      - name: Cache Cargo dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run curated mutations
+        id: mutate
+        shell: bash
+        run: |
+          set -uo pipefail
+          mkdir -p mutation-reports
+          saw_survivors=false
+          saw_error=false
+          for crate in amm batch_auction concentrated_liquidity governance token; do
+            echo "::group::Mutation check: $crate"
+            python3 scripts/mutation_check.py \
+              --crate "$crate" \
+              --report "mutation-reports/$crate.txt"
+            status=$?
+            if [ "$status" -ne 0 ]; then
+              if grep -Eq '^Unaccepted survivors: [1-9][0-9]*$' "mutation-reports/$crate.txt"; then
+                saw_survivors=true
+              else
+                saw_error=true
+              fi
+            fi
+            echo "::endgroup::"
+          done
+          result=pass
+          if [ "$saw_survivors" = true ]; then
+            result=survivors
+          fi
+          if [ "$saw_error" = true ] && [ "$saw_survivors" = false ]; then
+            result=error
+          fi
+          echo "result=$result" >> "$GITHUB_OUTPUT"
+          if [ "$saw_error" = true ]; then
+            exit 2
+          fi
+          if [ "$saw_survivors" = true ]; then
+            exit 1
+          fi
+
+      - name: Upload mutation reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutation-reports
+          path: mutation-reports/
+          if-no-files-found: error
+          retention-days: 30
+
+  report:
+    needs: mutation-check
+    if: >-
+      always()
+      && github.repository == 'promisszn/soroban-amm'
+      && ((needs.mutation-check.outputs.result == 'survivors')
+      || (needs.mutation-check.outputs.result == 'pass'
+      && needs.mutation-check.result == 'success'))
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_REPO: ${{ github.repository }}
+      RESULT: ${{ needs.mutation-check.outputs.result }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      SHA: ${{ github.sha }}
+      LABEL: mutation-survivors
+    steps:
+      - name: Open, update or close the tracking issue
+        shell: bash
+        run: |
+          set -euo pipefail
+          open_issue="$(gh issue list --label "$LABEL" --state open --limit 1 --json number --jq '.[0].number // empty')"
+          if [ "$RESULT" = pass ]; then
+            if [ -n "$open_issue" ]; then
+              gh issue close "$open_issue" --comment "Curated mutation check passed on \`$SHA\`: $RUN_URL"
+            fi
+            exit 0
+          fi
+
+          body="$(printf '%s\n\nMutation survivors are available in the \`mutation-reports\` workflow artifact.\n\n| | |\n|---|---|\n| Commit | \`%s\` |\n| Run | %s |\n' \
+            '**Curated mutation check found unaccepted survivors.**' "$SHA" "$RUN_URL")"
+          if [ -n "$open_issue" ]; then
+            gh issue comment "$open_issue" --body "$body"
+          else
+            gh label create "$LABEL" --color B60205 \
+              --description "Opened and closed automatically by the Curated Mutation Check workflow" --force
+            gh issue create --label "$LABEL" \
+              --title "Curated mutation check has unaccepted survivors" \
+              --body "$body"
+          fi
